@@ -9,7 +9,7 @@ def note(key, measures, *, zone='甲区', state='已分派', estimate=0, hits=()
 
 def test_field_plan_is_visible_and_references_real_tickets():
     desk = preview()
-    plan = desk['sections'][6]
+    plan = desk['sections'][7]
     assert plan['operating_title'] == '清场倒排窗口'
     assert plan['operating_rows']
     scoped = {item['关联单据'] for item in plan['operating_rows'] if '关联单据' in item}

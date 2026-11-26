@@ -42,7 +42,7 @@ def test_work_order_types_keep_scope_and_valid_costs():
     info = preview(33)
     total = 0
     by_state = Counter(work['state'] for work in info['rows'])
-    assert set(by_state) <= {'已分派','候补','暂停','人工判读','观察'}
+    assert set(by_state) <= {'已分派','候补','暂停','人工判读','观察','拦截'}
     for work in info['rows']:
         assert 1 <= work['cost'] <= 12
         if work['state'] == '已分派':

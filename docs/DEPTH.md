@@ -13,9 +13,10 @@ AI/ML · 传统ML · 中型
 | M3 | 清理因素 | 原始数据到特征 | `src/cinemaready/hall_signature/service.py` | `tests/test_hall_signature.py` |
 | M4 | 耗时滚动 | 训练及可重复推断 | `src/cinemaready/cleanup_trend/service.py` | `tests/test_cleanup_trend.py` |
 | M5 | 窗口复算 | 回放误差及可信区间 | `src/cinemaready/slot_backcheck/service.py` | `tests/test_slot_backcheck.py` |
-| M6 | 排片分组 | 差异定位和外推审查 | `src/cinemaready/programming_mix/service.py` | `tests/test_programming_mix.py` |
-| M7 | 清场计划 | 硬规则与额度分配 | `src/cinemaready/usher_windows/service.py` | `tests/test_usher_windows.py` |
-| M8 | 开厅交接 | 单据及额度证据 | `src/cinemaready/hall_handover/service.py` | `tests/test_hall_handover.py` |
+| M6 | 区间治理 | 分组/全馆区间守卫与拦截 | `src/cinemaready/interval_governance/service.py` | `tests/test_interval_governance.py`、`tests/test_interval_workbench.py` |
+| M7 | 排片分组 | 差异定位和外推审查 | `src/cinemaready/programming_mix/service.py` | `tests/test_programming_mix.py` |
+| M8 | 清场计划 | 硬规则与额度分配 | `src/cinemaready/usher_windows/service.py` | `tests/test_usher_windows.py` |
+| M9 | 开厅交接 | 单据及额度证据 | `src/cinemaready/hall_handover/service.py` | `tests/test_hall_handover.py` |
 
 ## 深度登记
 
@@ -30,3 +31,8 @@ AI/ML · 传统ML · 中型
 | TRAP-44 | 校准样本不足 | 分派前转人工判读并保留原因 | `src/cinemaready/slot_backcheck/service.py` | `tests/test_slot_backcheck.py::test_empty_calibration_requires_review` |
 | TRAP-53 | 单条推断与混批 | 复用冻结参数，各条估计完全一致 | `src/cinemaready/cleanup_trend/service.py` | `tests/test_cleanup_trend.py::test_input_batch_invariance` |
 | TRAP-54 | 特征版本与模型不配对 | 拒绝继续推断并要求重拟合 | `src/cinemaready/cleanup_trend/service.py` | `tests/test_cleanup_trend.py::test_mismatched_model_input_version_fails` |
+| TRAP-61 | 回放或当班样本泄漏进区间校准 | 三窗单号重叠即拒绝，区间只吃校准窗 | `src/cinemaready/interval_governance/service.py` | `tests/test_interval_governance.py::test_windows_must_be_disjoint` |
+| TRAP-62 | 分组区间未减少误拦却切换 | 误拦持平也回落全馆，守卫逐条留痕 | `src/cinemaready/interval_governance/service.py` | `tests/test_interval_governance.py::test_grouped_scheme_adopted_only_when_misblocks_drop_without_new_misses` |
+| TRAP-63 | 某组多漏放超窗场次 | 任一组漏放高于全馆即否决分组方案 | `src/cinemaready/interval_governance/service.py` | `tests/test_interval_governance.py::test_more_missed_releases_in_any_group_blocks_grouped_scheme` |
+| TRAP-64 | 当班分组缺回放实绩 | 守卫否决并沿用全馆，不用零误差替代 | `src/cinemaready/interval_governance/service.py` | `tests/test_interval_workbench.py::test_sample_shift_keeps_global_scheme_with_explicit_guards` |
+| TRAP-65 | 拦下的单占用工位 | 拦截不进候选、不耗额度，硬规则仍优先 | `src/cinemaready/usher_windows/service.py` | `tests/test_interval_governance.py::test_blocked_ticket_never_occupies_workstation` |

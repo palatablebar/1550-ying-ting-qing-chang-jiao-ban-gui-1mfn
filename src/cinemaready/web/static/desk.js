@@ -8,7 +8,7 @@ let currentBatch = null;
 const order = {key:'单号',zone:'作业区',estimate:'估计',interval:'估计区间',state:'处置',cost:'用量',reason:'原因码',evidence:'处理依据',drivers:'主要影响项',missing:'缺测量',hits:'命中规则'};
 const visibleOrder = ['key','zone','estimate','state','cost'];
 let ledger;
-let focus = 6;
+let focus = 7;
 let currentItem;
 
 function valueOf(item) {
@@ -158,7 +158,7 @@ function showQueue() {
 
 function redraw(data) {
     ledger = data;
-    if (focus === 'record') focus = 6;
+    if (focus === 'record') focus = 7;
     byId('stamp').textContent = data.run_id;
     byId('capacity').value = data.capacity;
     byId('mode').value = data.mode;

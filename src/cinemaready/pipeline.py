@@ -7,6 +7,7 @@ from .turnover_calendar import service as cohort_service
 from .hall_signature import service as feature_service
 from .cleanup_trend import service as model_service
 from .slot_backcheck import service as calibration_service
+from .interval_governance import service as interval_service
 from .programming_mix import service as monitor_service
 from .usher_windows import service as dispatch_service
 from .hall_handover import service as audit_service
@@ -18,6 +19,7 @@ MODULES = (('show_handoffs', '场次交接'),
  ('hall_signature', '清理因素'),
  ('cleanup_trend', '耗时滚动'),
  ('slot_backcheck', '窗口复算'),
+ ('interval_governance', '区间治理'),
  ('programming_mix', '排片分组'),
  ('usher_windows', '清场计划'),
  ('hall_handover', '开厅交接'))
@@ -50,24 +52,48 @@ def stage_at(index, details, records, issues=()):
     return {'key': code, 'title': title, 'summary': details, 'records': list(records), 'errors': list(issues)}
 
 
-def rows_for(plan, scored, vectors):
+def rows_for(plan, scored, vectors, dispatch_views=None):
     by_key = {item.key: item for item in scored}
+    view_by_key = {item.raw.key: item for item in (dispatch_views or ())}
     factor_names = ('本场人数', '单桶污渍压力', '交班节奏', '楼梯移动压力', '污渍与人流交互')
     order = []
     for job in plan.jobs:
         point = by_key[job.key]
+        view = view_by_key.get(job.key)
+        lower = job.lower if view is None else view.lower
+        upper = job.upper if view is None else view.upper
         if len(point.contributions) == len(factor_names):
             reasons = sorted(zip(factor_names, point.contributions, strict=True), key=lambda val: (-abs(val[1]), val[0]))
             driver = ' · '.join(f'{key} {amount:+.2f}' for key, amount in reasons[:2])
         else:
             driver = ' · '.join(f'{amount:+.2f}' for amount in point.contributions)
-        interval = ('–' if job.lower is None else f'{job.lower:.2f}–{job.upper:.2f}')
+        interval = ('–' if lower is None else f'{lower:.2f}–{upper:.2f}')
         order.append({'key': job.key, 'zone': job.cohort, 'estimate': job.estimate, 'interval': interval,
                       'state': job.state, 'cost': job.cost, 'reason': job.reason, 'evidence': job.summary,
                       'drivers': driver, 'missing': len(point.missing), 'hits': list(job.rule_hits),
                       'measurements': dict(zip(('seats', 'filled', 'spill', 'minutes', 'bins', 'stairs'), point.input_values, strict=True)),
                       'unmeasured': list(point.missing), 'operations': feature_service.business_factors(vectors[job.key])})
     return order
+
+
+def interval_stage_records(book):
+    records = [
+        {'核对项': '当班选定方案', '结果': book['选定方案']},
+        {'核对项': '切换说明', '结果': '；'.join(book['切换说明'])},
+    ]
+    records.extend({'守卫': item['守卫'], '通过': '是' if item['通过'] else '否',
+                    **{key: value for key, value in item.items()
+                       if key not in ('守卫', '通过')}} for item in book['守卫'])
+    records.extend({'分组校准': item['影厅组'], '校准实绩': item['校准实绩'],
+                    '区间方法': item['区间方法'], '资格': item['资格']}
+                   for item in book['分组校准'])
+    records.extend({'回放方案': '全馆区间', **{key: value for key, value in row.items()}}
+                   for row in book['全馆回放'])
+    records.extend({'回放方案': '分组区间', **{key: value for key, value in row.items()}}
+                   for row in book['分组回放'])
+    records.extend({'区间红线标记当班单': key, '结果': '上界超出清场空档（硬规则优先时实际暂停）'}
+                   for key in book['区间红线标记当班单'])
+    return records
 
 
 def comparison_rows(predictions):
@@ -108,8 +134,8 @@ class ShiftDossier:
         detection = monitor_service.scan_current(baseline,prepared.live,self.feature_stamp.fingerprint)
         return holdout, assignment, detection
 
-    def seal(self, plan, mode):
-        return audit_service.close_batch(self.raw_forms,self.accepted,self.history,plan,self.feature_stamp.fingerprint,self.forecaster.name,mode)
+    def seal(self, plan, mode, interval_scheme):
+        return audit_service.close_batch(self.raw_forms,self.accepted,self.history,plan,self.feature_stamp.fingerprint,self.forecaster.name,mode,interval_scheme)
 
 
 def execute(documents, capacity=12, mode='balanced', *, as_of=96):
@@ -120,8 +146,16 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
     dossier = ShiftDossier(documents,as_of)
     fitted_calibration, estimates = dossier.grading()
     evaluated, checked_live, drift = dossier.verification(estimates,fitted_calibration)
-    allocation = dispatch_service.plan_jobs(checked_live,drift.domain,capacity,mode)
-    closed = dossier.seal(allocation,mode)
+    # 区间方案只用校准期实绩拟合，用同一批成熟回放场次对比；当班样本不参与校准。
+    regime = interval_service.build_interval_regime(
+        estimates['calibration'], estimates['replay'], estimates['live'])
+    # 整班一次性切换：当班每一张单都按选定方案取区间，缺成熟校准的组回落全馆。
+    live_for_dispatch = tuple(
+        calibration_service.check_point(point, regime.verification_for(point.cohort))
+        for point in estimates['live'])
+    blocked = interval_service.blocked_keys(regime, live_for_dispatch)
+    allocation = dispatch_service.plan_jobs(live_for_dispatch,drift.domain,capacity,mode,blocked)
+    closed = dossier.seal(allocation,mode,regime.selected)
     intake,windows,state,features,kernel = dossier.accepted,dossier.history,dossier.feature_stamp,dossier.prepared,dossier.forecaster
     scored = estimates['live']
     performance = calibration_service.performance(evaluated)
@@ -131,11 +165,12 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
         {'label': '当班影厅场次', 'value': len(allocation.jobs)},
         {'label': '已分派', 'value': states.get('已分派', 0)},
         {'label': '候补', 'value': states.get('候补', 0)},
+        {'label': '拦截', 'value': states.get('拦截', 0)},
         {'label': '暂停及人工判读', 'value': states.get('暂停', 0) + states.get('人工判读', 0)},
         {'label': '额度结余', 'value': allocation.balance},
     ]
     vectors = {item.key: item for item in features.live}
-    row_list = rows_for(allocation, scored, vectors)
+    row_list = rows_for(allocation, scored, vectors, live_for_dispatch)
     operating_rows = dispatch_service.operating_ledger(row_list)
     overtime = calibration_service.boundary_diagnostics(evaluated, 15)
     sector = calibration_service.sector_replay(evaluated, 15)
@@ -144,18 +179,20 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
     features_glance = feature_service.feature_evidence(state) + feature_service.measure_review(features)
     weight_rows = [{'量测': key, '取值': value} for key, value in kernel.evidence]
     ignored = [issue.evidence() for issue in intake.issues]
+    interval_book = interval_service.interval_evidence(regime)
     details = [
         stage_at(0, f'接收 {intake.source_rows} 条，采用 {len(intake.entries)} 条', intake_service.preliminary_evidence(intake), ignored),
         stage_at(1, f'拟合 {len(windows.train)} 条，校准 {len(windows.calibration)} 条，回放 {len(windows.replay)} 条', cohort_service.window_evidence(windows) + cohort_service.readiness_evidence(windows, as_of)),
         stage_at(2, '特征转换版本 ' + state.fingerprint, features_glance),
         stage_at(3, kernel.name, weight_rows + model_service.inspection_rows(kernel, features) + comparison_rows(scored)),
         stage_at(4, f'{fitted_calibration.method} · {performance.status} · {performance.count} 条回放实绩', calibration_service.calibration_evidence(performance) + [overtime] + sector),
-        stage_at(5, f'{drift.status} · {len(drift.domain)} 张单据需外推判读', monitor_service.shift_evidence(drift, coverage) + operating_shift),
-        stage_at(6, f'本班占用 {allocation.capacity-allocation.balance} / {allocation.capacity} 个工位单位', dispatch_service.action_evidence(allocation) + dispatch_service.operating_group(checked_live, allocation)),
-        stage_at(7, f'处置凭证 {closed.stamp} · 额度守恒', audit_service.reconciliation_evidence(closed) + field_evidence['执行业务单']),
+        stage_at(5, f'{regime.selected} · 整班同一套区间', interval_stage_records(interval_book)),
+        stage_at(6, f'{drift.status} · {len(drift.domain)} 张单据需外推判读', monitor_service.shift_evidence(drift, coverage) + operating_shift),
+        stage_at(7, f'本班占用 {allocation.capacity-allocation.balance} / {allocation.capacity} 个工位单位', dispatch_service.action_evidence(allocation) + dispatch_service.operating_group(live_for_dispatch, allocation)),
+        stage_at(8, f'处置凭证 {closed.stamp} · 额度守恒', audit_service.reconciliation_evidence(closed) + field_evidence['执行业务单']),
     ]
-    details[6]['operating_rows'] = operating_rows
-    details[6]['operating_title'] = '清场倒排窗口'
+    details[7]['operating_rows'] = operating_rows
+    details[7]['operating_title'] = '清场倒排窗口'
     points = [{'label': row['key'], 'value': row['estimate'], 'state': row['state'], 'zone': row['zone'],
                'upper': row['interval'], 'cost': row['cost']} for row in sorted(row_list, key=lambda row: row['key'])]
     def estimate(vector):
@@ -167,12 +204,13 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
         current = vectors[row['key']]
         row['alternatives'] = feature_service.render_interventions(current, state, estimate)
         row['joint_experiments'] = feature_service.render_joint_experiments(current,state,estimate)
-    details[7]['records'].extend(audit_service.site_checklist(row_list))
-    details[7]['records'].extend(audit_service.intervention_summary(row_list))
+    details[8]['records'].extend(audit_service.site_checklist(row_list))
+    details[8]['records'].extend(audit_service.intervention_summary(row_list))
     overview_report = {'capacity' : capacity, 'mode': mode, 'as_of': as_of, 'sample_hash': closed.batch_hash,
               'policy_hash': closed.policy_hash, 'feature_stamp': state.fingerprint,
               'model': kernel.name, 'run_id': closed.stamp, 'object_name': DISPLAY['object_name'],
               'unit': DISPLAY['unit'], 'sections': details, 'flow_counts': list(states.items()),
+              'interval_policy': interval_book,
               'measures': {'seats': ('总座数', '席'),
  'filled': ('本场上座', '%'),
  'spill': ('报告污渍点', '处'),

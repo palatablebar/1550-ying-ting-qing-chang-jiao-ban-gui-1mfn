@@ -41,7 +41,7 @@ def confidence_weight(estimate, cutoff):
     return bounded / (1 + bounded)
 
 
-def recommend(assessment, attention, policy):
+def recommend(assessment, attention, policy, blocked=frozenset()):
     raw = assessment.raw
     data = measures(raw.input_values)
     estimate = assessment.estimate
@@ -54,6 +54,10 @@ def recommend(assessment, attention, policy):
         state = '暂停'
         reason = domain_codes[0].rule_id
         summary = domain_codes[0].meaning
+    elif raw.key in blocked:
+        state = '拦截'
+        reason = 'INTERVAL_OVER_CLEAR_GAP'
+        summary = '区间上界超出清场空档，预留开门验收后无法按时交厅'
     elif raw.key in attention or assessment.uncertain:
         state = '人工判读'
         reason = 'OUT_OF_REFERENCE' if raw.key in attention else 'INSUFFICIENT_CALIBRATION'
@@ -70,11 +74,11 @@ def recommend(assessment, attention, policy):
                state, reason, summary, round(level, 5), tuple(item.rule_id for item in domain_codes))
 
 
-def allocate(assessments, attention, policy):
+def allocate(assessments, attention, policy, blocked=frozenset()):
     selected={}
     waiting=[]
     for sample in assessments:
-        signed=recommend(sample,attention,policy)
+        signed=recommend(sample,attention,policy,blocked)
         if signed.key in selected:
             raise ValueError('处置登记号重复')
         selected[signed.key]=signed
@@ -111,8 +115,8 @@ def allocate(assessments, attention, policy):
     return Plan(tuple(handoff),policy.capacity,balance,tuple(sorted(allocation.items())))
 
 
-def plan_jobs(assessments, attention, capacity, mode='balanced'):
-    return allocate(assessments, frozenset(attention), Policy.select(capacity, mode))
+def plan_jobs(assessments, attention, capacity, mode='balanced', blocked=frozenset()):
+    return allocate(assessments, frozenset(attention), Policy.select(capacity, mode), frozenset(blocked))
 
 
 def action_evidence(plan):

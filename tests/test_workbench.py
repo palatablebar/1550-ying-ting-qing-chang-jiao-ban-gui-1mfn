@@ -7,7 +7,7 @@ ROUTE = '/api/cinemaready'
 
 def test_preset_workbench_has_real_business_rows():
     output = app.test_client().get(ROUTE+'/overview').get_json()
-    assert len(output['metrics']) == 5 and len(output['sections']) == 8
+    assert len(output['metrics']) == 6 and len(output['sections']) == 9
     assert len(output['rows']) >= 10
     assert output['model'] == '指数平滑与分厅残差'
 
@@ -50,9 +50,9 @@ def test_input_order_cannot_change_disposition():
 def test_changed_profile_fetches_matching_stage():
     web = app.test_client()
     run = web.post(ROUTE+'/run',json={'capacity':6, 'strategy':'focus'}).get_json()
-    found = web.get(ROUTE+'/stages/'+run['sections'][6]['key']+'?capacity=6&strategy=focus')
+    found = web.get(ROUTE+'/stages/'+run['sections'][7]['key']+'?capacity=6&strategy=focus')
     assert found.status_code == 200
-    assert found.get_json() == {**run['sections'][6],'run_id':run['run_id']}
+    assert found.get_json() == {**run['sections'][7],'run_id':run['run_id']}
 
 
 @pytest.mark.parametrize('capacity',[0,True,61,None,'8',3.5])

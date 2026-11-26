@@ -27,8 +27,8 @@ def data_fingerprint(records):
     return stable_digest(sorted(encoded))
 
 
-def policy_fingerprint(capacity,mode,feature_id,model_kind):
-    return stable_digest((capacity,mode,model_kind,POLICY_VERSION,feature_id))[:16]
+def policy_fingerprint(capacity,mode,feature_id,model_kind,interval_scheme='全馆区间'):
+    return stable_digest((capacity,mode,model_kind,POLICY_VERSION,feature_id,interval_scheme))[:16]
 
 
 def check_flow(intake, windows, dispatched):
@@ -54,10 +54,10 @@ def check_flow(intake, windows, dispatched):
                        balance=dispatched.balance,states=tuple(sorted(disposition.items())))
 
 
-def close_batch(dataset,intake,windows,dispatched,feature_id,model_kind,mode):
+def close_batch(dataset,intake,windows,dispatched,feature_id,model_kind,mode,interval_scheme='全馆区间'):
     counts=check_flow(intake,windows,dispatched)
     upload=data_fingerprint(dataset)
-    settings=policy_fingerprint(dispatched.capacity,mode,feature_id,model_kind)
+    settings=policy_fingerprint(dispatched.capacity,mode,feature_id,model_kind,interval_scheme)
     decisions=tuple((job.key,job.state,job.cost,job.reason,job.estimate) for job in dispatched.jobs)
     checksum=stable_digest((upload,settings,astuple(counts),*decisions))[:16]
     return BatchReceipt(checksum,upload,settings,counts,decisions)
